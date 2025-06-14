@@ -1,0 +1,13 @@
+{
+  "name": "doc-converter-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "express": "^4.x",
+    "multer": "^1.x",
+    "axios": "^1.x",
+    "cors": "^2.x",
+    "dotenv": "^16.x"
+  }
+}
