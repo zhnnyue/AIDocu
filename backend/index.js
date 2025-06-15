@@ -1,40 +1,77 @@
-require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
+const axiosRetry = require('axios-retry');
 const cors = require('cors');
-const fs = require('fs');
+require('dotenv').config();
 
 const app = express();
+app.use(cors());             // Enable CORS for all routes
+app.options('*', cors());    // Handle preflight requests
+
 const upload = multer({ dest: 'uploads/' });
 const API_KEY = process.env.CLOUDMERSIVE_API_KEY;
 
-app.use(cors());
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (error) => {
+    return error.response?.status >= 500;
+  },
+  onRetry: (err, attempt) => {
+    console.log(`Retry attempt ${attempt}:`, err.message);
+  }
+});
 
-async function convert(filePath, endpoint, contentType, outExt, res) {
-  const data = fs.readFileSync(filePath);
-  const apiRes = await axios.post(
-    `https://api.cloudmersive.com/convert/${endpoint}`,
-    data, {
-      headers: {
-        'Content-Type': contentType,
-        'Apikey': API_KEY
-      },
+async function convertPDF(filePath) {
+  console.log(`Uploading to Cloudmersive (rasterize) ${filePath}`);
+  const data = require('fs').readFileSync(filePath);
+  const res = await axios.post(
+    'https://api.cloudmersive.com/convert/pdf/to/docx/rasterize',
+    data,
+    {
+      headers: { Apikey: API_KEY, 'Content-Type': 'application/pdf' },
       responseType: 'arraybuffer'
     }
   );
-  res.set('Content-Disposition', `attachment; filename=converted.${outExt}`);
-  res.send(apiRes.data);
-  fs.unlinkSync(filePath);
+  return res.data;
 }
 
-app.post('/convert/pdf-to-word', upload.single('file'), (req, res) =>
-  convert(req.file.path, 'pdf/to/docx', 'application/pdf', 'docx', res)
-);
+async function convertDocx(filePath) {
+  console.log(`Converting DOCX → PDF for ${filePath}`);
+  const data = require('fs').readFileSync(filePath);
+  const res = await axios.post(
+    'https://api.cloudmersive.com/convert/docx/to/pdf',
+    data,
+    {
+      headers: { Apikey: API_KEY, 'Content-Type': 'application/octet-stream' },
+      responseType: 'arraybuffer'
+    }
+  );
+  return res.data;
+}
 
-app.post('/convert/word-to-pdf', upload.single('file'), (req, res) =>
-  convert(req.file.path, 'docx/to/pdf', 'application/octet-stream', 'pdf', res)
-);
+app.post('/convert/pdf-to-word', upload.single('file'), async (req, res) => {
+  try {
+    const blob = await convertPDF(req.file.path);
+    res.set('Content-Disposition', 'attachment; filename=converted.docx');
+    res.send(blob);
+  } catch (err) {
+    console.error('PDF conversion error:', err.response?.status, err.response?.data);
+    res.status(502).json({ error: 'Conversion failed due to internal server error.' });
+  }
+});
+
+app.post('/convert/word-to-pdf', upload.single('file'), async (req, res) => {
+  try {
+    const blob = await convertDocx(req.file.path);
+    res.set('Content-Disposition', 'attachment; filename=converted.pdf');
+    res.send(blob);
+  } catch (err) {
+    console.error('DOCX conversion error:', err.response?.status, err.response?.data);
+    res.status(502).json({ error: 'Conversion failed due to internal server error.' });
+  }
+});
 
 const port = process.env.PORT || 3001;
-app.listen(port, () => console.log(`Backend running on port ${port}`));
+app.listen(port, () => console.log(`Server running on port ${port}`));
