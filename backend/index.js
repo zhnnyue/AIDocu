@@ -1,79 +1,64 @@
-const express = require('express');
-const multer = require('multer');
-const axios = require('axios');
-const fs = require('fs');
-const cors = require('cors');
-const path = require('path');
+const express = require("express");
+const cors = require("cors");
+const multer = require("multer");
+const axios = require("axios");
+const fs = require("fs");
+require("dotenv").config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const upload = multer({ dest: "uploads/" });
 
-require('dotenv').config();
-
-// Enable CORS for all routes
 app.use(cors());
-app.options('*', cors());
+app.use(express.json());
 
-// Set up multer for handling file uploads
-const upload = multer({ dest: 'uploads/' });
+// Logging basic server status
+console.log("Server is starting...");
 
-// POST endpoint to handle PDF-to-Word conversion
-app.post('/convert', upload.single('file'), async (req, res) => {
-  const filePath = req.file.path;
-  const cloudmersiveUrl = 'https://api.cloudmersive.com/convert/pdf/to/docx/rasterize';
-  const apiKey = process.env.CLOUDMERSIVE_API_KEY;
+app.post("/convert", upload.single("file"), async (req, res) => {
+  try {
+    console.log("🔁 Received a file upload request");
 
-  const fileStream = fs.createReadStream(filePath);
-  const headers = {
-    'Apikey': apiKey,
-    'Content-Type': 'application/pdf',
-  };
+    if (!req.file) {
+      console.error("❌ No file received in the request");
+      return res.status(400).send("No file uploaded.");
+    }
 
-  let attempt = 0;
-  const maxRetries = 3;
-  let success = false;
-  let response;
+    console.log("📄 Received file:", req.file);
+    console.log("📎 Original filename:", req.file.originalname);
+    console.log("📏 File size:", req.file.size, "bytes");
+    console.log("🔑 API key present:", !!process.env.CLOUDMERSIVE_API_KEY);
 
-  while (attempt < maxRetries && !success) {
-    try {
-      console.log(`Attempt ${attempt + 1} to convert file...`);
+    const fileStream = fs.createReadStream(req.file.path);
 
-      response = await axios.post(cloudmersiveUrl, fileStream, {
-        headers: headers,
-        responseType: 'arraybuffer',
-        timeout: 10000,
-      });
-
-      success = true;
-    } catch (error) {
-      attempt++;
-      console.error(`Attempt ${attempt} failed:`, error.message);
-
-      if (attempt >= maxRetries) {
-        return res.status(502).json({
-          error: 'Cloudmersive API failed after multiple attempts.',
-          details: error.message,
-        });
+    const response = await axios.post(
+      "https://api.cloudmersive.com/convert/pdf/to/docx/rasterize",
+      fileStream,
+      {
+        headers: {
+          "Content-Type": "application/pdf",
+          Apikey: process.env.CLOUDMERSIVE_API_KEY,
+        },
+        responseType: "arraybuffer",
       }
+    );
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log("✅ File converted successfully");
+
+    res.setHeader("Content-Disposition", "attachment; filename=converted.docx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.send(response.data);
+  } catch (error) {
+    console.error("❌ Conversion failed:", error.response?.status, error.response?.data || error.message);
+    res.status(500).send("Conversion failed.");
+  } finally {
+    // Clean up uploaded file
+    if (req.file) {
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error("⚠️ Error deleting uploaded file:", err);
+      });
     }
   }
-
-  // Clean up the uploaded file
-  fs.unlink(filePath, (err) => {
-    if (err) console.error('Error deleting file:', err);
-  });
-
-  // Send the resulting DOCX file to the client
-  res.set({
-    'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'Content-Disposition': 'attachment; filename="converted.docx"',
-  });
-  res.send(response.data);
 });
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
