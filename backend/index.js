@@ -11,37 +11,47 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
-// Set your API key securely
+// Cloudmersive API key setup
 const defaultClient = cloudmersiveConvertApiClient.ApiClient.instance;
 const Apikey = defaultClient.authentications['Apikey'];
-Apikey.apiKey = '07895b15-6385-4948-94bf-e58c0c332c2c';
+Apikey.apiKey = '07895b15-6385-4948-94bf-e58c0c332c2c'; // Replace with your own if necessary
 
-const apiInstance = new cloudmersiveConvertApiClient.ConvertDocumentApi();
-
-// PDF to Word route
-app.post('/convert/pdf-to-word', upload.single('file'), (req, res) => {
+// POST: /convert/pdf-to-word
+app.post('/convert/pdf-to-word', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
+  // MIME type check
+  if (req.file.mimetype !== 'application/pdf') {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Uploaded file is not a valid PDF.' });
+  }
+
   const inputFile = fs.createReadStream(req.file.path);
-  console.log('📄 Received file:', req.file.originalname);
-  console.log('🛣 File path:', req.file.path);
-  console.log('📎 MIME type:', req.file.mimetype);
+  const apiInstance = new cloudmersiveConvertApiClient.ConvertDocumentApi();
 
-  // Use callback-style to prevent double send
-  apiInstance.convertDocumentPdfToDocx(inputFile, (error, data, response) => {
-    fs.unlink(req.file.path, () => {}); // Always clean up
+  console.log(`📎 MIME type: ${req.file.mimetype}`);
+  console.log(`🛣 File path: ${req.file.path}`);
+  console.log(`📄 Received file: ${req.file.originalname}`);
 
-    if (error) {
-      console.error('❌ Conversion error:', error.message || error);
-      return res.status(500).json({ error: 'PDF to Word conversion failed' });
-    }
+  try {
+    apiInstance.convertDocumentPdfToDocx(inputFile, (error, data, response) => {
+      fs.unlink(req.file.path, () => {}); // Always clean up
 
-    // Success: send Word document
-    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.send(data);
-  });
+      if (error) {
+        console.error('❌ Conversion error:', error?.response?.text || error.message);
+        return res.status(500).json({ error: 'Conversion failed - ' + (error?.response?.text || error.message) });
+      }
+
+      res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.send(data);
+    });
+  } catch (err) {
+    fs.unlink(req.file.path, () => {});
+    console.error('❌ Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Unexpected error occurred.' });
+  }
 });
 
 // Start server
