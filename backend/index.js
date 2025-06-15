@@ -1,48 +1,44 @@
 const express = require('express');
 const multer = require('multer');
-const cloudmersiveConvertApiClient = require('cloudmersive-convert-api-client');
 const fs = require('fs');
+const cors = require('cors');
 const path = require('path');
+const cloudmersiveConvertApiClient = require('cloudmersive-convert-api-client');
 
-// ... existing config and API setup ...
+const app = express(); // ✅ This must come BEFORE using `app`
 
 const upload = multer({ dest: 'uploads/' });
+app.use(cors());
+app.use(express.json());
 
-// PDF to Word endpoint
+// Cloudmersive API key
+const defaultClient = cloudmersiveConvertApiClient.ApiClient.instance;
+const Apikey = defaultClient.authentications['Apikey'];
+Apikey.apiKey = '07895b15-6385-4948-94bf-e58c0c332c2c';
+
+// Endpoint
 app.post('/convert/pdf-to-word', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-    }
-
-    // Read uploaded file
-    const filePath = path.resolve(req.file.path);
-    const inputFile = fs.createReadStream(filePath);
-
-    // Prepare Cloudmersive client
-    const defaultClient = cloudmersiveConvertApiClient.ApiClient.instance;
-    const Apikey = defaultClient.authentications['Apikey'];
-    Apikey.apiKey = process.env.CLOUDMERSIVE_API_KEY;
-
-    const apiInstance = new cloudmersiveConvertApiClient.ConvertDocumentApi();
-
-    // Call the API
-    apiInstance.convertDocumentPdfToDocx(inputFile, (error, data, response) => {
-      // Delete temp upload
-      fs.unlinkSync(filePath);
-
-      if (error) {
-        return res.status(500).json({ message: 'Conversion failed', error: error.message });
-      }
-
-      // Respond with DOCX
-      res.set({
-        'Content-Disposition': 'attachment; filename="converted.docx"',
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      });
-      res.send(data);
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'Internal server error', error: err.message });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
   }
+
+  const inputFile = fs.createReadStream(req.file.path);
+  const apiInstance = new cloudmersiveConvertApiClient.ConvertDocumentApi();
+
+  try {
+    const result = await apiInstance.convertDocumentPdfToDocx(inputFile);
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.send(result.body);
+  } catch (error) {
+    console.error('Conversion error:', error?.response?.text || error.message);
+    res.status(500).json({ error: 'PDF to Word conversion failed' });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
